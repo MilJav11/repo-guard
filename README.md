@@ -18,13 +18,13 @@ Developers often notice these issues too late — after pushing to GitHub. `repo
 
 ## Installation
 
-Clone the repository and install it locally in editable mode:
+You can install `repo-guard` globally directly from GitHub:
+
 ```bash
-git clone https://github.com/your-username/repo-guard.git
-cd repo-guard
-pip install -e .
+pip install git+https://github.com/MilJav11/repo-guard.git
 ```
-Now you can use the tool globally within your local repository:
+
+Then, navigate to any of your local git repositories and activate the guard:
 
 ```bash
 repo-guard install-hook
