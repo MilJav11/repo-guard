@@ -17,7 +17,7 @@ Modern AI coding assistants frequently generate:
 - Unsafe example configs
 - Accidentally staged secrets
 
-Developers often notice these issues too late — after pushing to GitHub. `repo-guard` exists to stop accidental leaks before the commit succeeds.
+Developers usually notice secrets after they already reached GitHub. `repo-guard` exists to stop accidental leaks before the commit succeeds.
 
 ## Demo
 
@@ -38,6 +38,16 @@ Then, navigate to any of your local git repositories and activate the guard:
 ```bash
 repo-guard install-hook
 ```
+## Quick Test
+
+```bash
+echo 'OPENAI_API_KEY="sk-123..."' > config.py
+git add config.py
+git commit -m "test"
+
+Expected result:
+[CRITICAL] OpenAI API key detected
+Commit blocked.
 
 ## How It Works
 
@@ -115,12 +125,5 @@ repo-guard intentionally does NOT:
 * Replace enterprise-grade server-side secret scanning solutions
 
 It is strictly optimized for fast, local, offline protection against common accidental exposures.
-
-## Demo
-
-A real staged OpenAI API key being blocked before commit.
-
-https://github.com/user-attachments/assets/dd57abc2-b434-4cdd-b640-99add1edd382
-
 
 
