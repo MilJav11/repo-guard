@@ -1,5 +1,8 @@
 # repo-guard
 
+One accidental commit can leak a real API key.
+repo-guard blocks secrets before they ever reach GitHub.
+
 A lightweight, lightning-fast local pre-commit hook designed to prevent accidental secret leaks in AI-generated repositories.
 
 ### ⚠️ Security Disclaimer
@@ -15,6 +18,12 @@ Modern AI coding assistants frequently generate:
 - Accidentally staged secrets
 
 Developers often notice these issues too late — after pushing to GitHub. `repo-guard` exists to stop accidental leaks before the commit succeeds.
+
+## Demo
+
+A real staged OpenAI API key being blocked before commit.
+
+https://github.com/user-attachments/assets/dd57abc2-b434-4cdd-b640-99add1edd382
 
 ## Installation
 
@@ -84,6 +93,17 @@ repo-guard is designed to execute in under one second during normal commits.
 
 Why? Because developers frequently bypass slow hooks using `git commit --no-verify`.
 The scanner intentionally prioritizes deterministic regex matching, staged-file-only scanning, and safe binary skipping to ensure you never feel the need to bypass your safety net.
+
+## Why not Gitleaks?
+
+repo-guard intentionally optimizes for:
+- ultra-fast local execution
+- staged-only validation
+- low false positives
+- zero configuration
+- simple deterministic behavior
+
+It is designed as a lightweight developer guardrail, not as a full enterprise secret scanning platform.
 
 ## Limitations
 
