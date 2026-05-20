@@ -44,8 +44,11 @@ repo-guard install-hook
 echo 'OPENAI_API_KEY="sk-123..."' > config.py
 git add config.py
 git commit -m "test"
+```
 
 Expected result:
+
+Plaintext
 [CRITICAL] OpenAI API key detected
 Commit blocked.
 
