@@ -48,9 +48,10 @@ git commit -m "test"
 
 Expected result:
 
-Plaintext
+```plaintext
 [CRITICAL] OpenAI API key detected
 Commit blocked.
+```
 
 ## How It Works
 
