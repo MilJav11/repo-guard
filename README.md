@@ -98,7 +98,8 @@ It is strictly optimized for fast, local, offline protection against common acci
 
 ## Demo
 
-A real staged OpenAI key being blocked before commit:
+A real staged OpenAI API key being blocked before commit.
+
 https://github.com/user-attachments/assets/dd57abc2-b434-4cdd-b640-99add1edd382
 
 
