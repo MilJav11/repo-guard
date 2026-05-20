@@ -95,3 +95,11 @@ repo-guard intentionally does NOT:
 * Replace enterprise-grade server-side secret scanning solutions
 
 It is strictly optimized for fast, local, offline protection against common accidental exposures.
+
+## Demo
+
+A real staged OpenAI key being blocked before commit:
+https://github.com/user-attachments/assets/dd57abc2-b434-4cdd-b640-99add1edd382
+
+
+
