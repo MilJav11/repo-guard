@@ -37,6 +37,7 @@ Then, navigate to any of your local git repositories and activate the guard:
 
 ```bash
 repo-guard install-hook
+# run inside your target git repository
 ```
 ## Quick Test
 
