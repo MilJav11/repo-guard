@@ -7,6 +7,60 @@ from typing import List, Dict, Any
 from rules import RULES, EXCLUDED_DIRS, EXCLUDED_EXTENSIONS, EXCLUDED_FILES, TESTING_KEYWORDS
 from findings import Finding, Severity
 
+# ---------------------------------------------------------------------------
+# Allowlist validation limits
+# ---------------------------------------------------------------------------
+
+MAX_ALLOWLIST_SIZE = 64 * 1024   # 64 KiB
+MAX_PATTERN_LENGTH = 256
+
+
+# ---------------------------------------------------------------------------
+# ReDoS detection
+# ---------------------------------------------------------------------------
+
+def _detect_nested_quantifier(pattern: str) -> bool:
+    r"""Conservative pure-Python detection of ReDoS-prone nested quantifiers.
+
+    Strategy
+    --------
+    1.  Strip backslash-escaped characters (so ``\)``, ``\+`` etc. are
+        treated as literals, not regex syntax).
+    2.  Strip character classes ``[...]`` so that ``+`` / ``*`` inside
+        brackets are ignored.
+    3.  Find every ``)`` immediately followed by ``+`` or ``*``.
+    4.  Walk backwards to locate the matching ``(``, then inspect the body
+        between them.  If the body contains ``+`` or ``*`` we have a nested
+        quantifier — the hallmark of exponential backtracking.
+
+    Returns ``True`` when a dangerous nested quantifier is detected.
+    """
+    # Step 1 & 2 — replace escapes with placeholder, strip character classes
+    cleaned = re.sub(r"\\.", "X", pattern)
+    cleaned = re.sub(r"\[[^\]]*\]", "", cleaned)
+
+    # Step 3 — every `)` followed by `+` or `*`
+    for m in re.finditer(r"\)[\+\*]", cleaned):
+        close_pos = m.start()
+        # Step 4 — find matching `(`
+        depth = 0
+        open_pos = None
+        for i in range(close_pos, -1, -1):
+            ch = cleaned[i]
+            if ch == ")":
+                depth += 1
+            elif ch == "(":
+                depth -= 1
+                if depth == 0:
+                    open_pos = i
+                    break
+        if open_pos is None:
+            continue
+        body = cleaned[open_pos + 1 : close_pos]
+        if "+" in body or "*" in body:
+            return True
+    return False
+
 class ScannerError(Exception):
     """Raised when an internal error occurs (e.g., git fails)."""
     pass
@@ -27,12 +81,83 @@ def load_allowlist() -> Dict[str, Any]:
     allowlist_path = pathlib.Path("allowlist.json")
     if not allowlist_path.exists():
         return {"paths": [], "patterns": []}
-    
+
+    # 1. File-size guard -------------------------------------------------
+    try:
+        fsize = allowlist_path.stat().st_size
+    except OSError as e:
+        raise ScannerError(f"Cannot read allowlist.json: {e}")
+    if fsize > MAX_ALLOWLIST_SIZE:
+        raise ScannerError(
+            f"allowlist.json is {fsize} bytes, exceeds maximum of "
+            f"{MAX_ALLOWLIST_SIZE} bytes (64 KiB)."
+        )
+
+    # 2. Parse JSON ------------------------------------------------------
     try:
         with open(allowlist_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
         raise ScannerError(f"Failed to parse allowlist.json: {e}")
+    except Exception as e:
+        raise ScannerError(f"Failed to read allowlist.json: {e}")
+
+    # 3. Structure validation --------------------------------------------
+    if not isinstance(data, dict):
+        raise ScannerError(
+            "allowlist.json must be a JSON object with 'paths' and 'patterns' keys."
+        )
+
+    if "paths" not in data or "patterns" not in data:
+        raise ScannerError(
+            "allowlist.json must contain both 'paths' and 'patterns' keys."
+        )
+
+    paths = data["paths"]
+    patterns = data["patterns"]
+
+    if not isinstance(paths, list):
+        raise ScannerError("allowlist.json: 'paths' must be a list.")
+    if not isinstance(patterns, list):
+        raise ScannerError("allowlist.json: 'patterns' must be a list.")
+
+    for i, p in enumerate(paths):
+        if not isinstance(p, str):
+            raise ScannerError(
+                f"allowlist.json: 'paths[{i}]' must be a string, "
+                f"got {type(p).__name__}."
+            )
+
+    for i, p in enumerate(patterns):
+        if not isinstance(p, str):
+            raise ScannerError(
+                f"allowlist.json: 'patterns[{i}]' must be a string, "
+                f"got {type(p).__name__}."
+            )
+
+        # 4. Pattern-length guard ----------------------------------------
+        if len(p) > MAX_PATTERN_LENGTH:
+            raise ScannerError(
+                f"allowlist.json: 'patterns[{i}]' is {len(p)} characters, "
+                f"exceeds maximum of {MAX_PATTERN_LENGTH}."
+            )
+
+        # 5. ReDoS guard -------------------------------------------------
+        if _detect_nested_quantifier(p):
+            raise ScannerError(
+                f"allowlist.json: 'patterns[{i}]' contains a dangerous "
+                f"nested quantifier and is rejected to prevent ReDoS attacks."
+            )
+
+        # 6. Regex-syntax check ------------------------------------------
+        try:
+            re.compile(p)
+        except re.error as e:
+            raise ScannerError(
+                f"allowlist.json: 'patterns[{i}]' is not a valid regex: {e}"
+            )
+
+    return data
 
 def is_excluded(filepath: str, allowlist_paths: List[str]) -> bool:
     path = pathlib.Path(filepath)
@@ -75,12 +200,7 @@ def scan_repository() -> List[Finding]:
     allowlist_paths = allowlist.get("paths", [])
     raw_patterns = allowlist.get("patterns", [])
     
-    compiled_allowlist = []
-    for p in raw_patterns:
-        try:
-            compiled_allowlist.append(re.compile(p))
-        except re.error as e:
-            sys.stderr.write(f"WARNING: Invalid regex in allowlist.json '{p}': {e}\n")
+    compiled_allowlist = [re.compile(p) for p in raw_patterns]
     
     try:
         staged_files = get_staged_files()
