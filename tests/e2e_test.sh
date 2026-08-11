@@ -48,12 +48,17 @@ if ! command -v python &> /dev/null; then
     fi
 fi
 
+# Resolve to absolute path before PATH is modified, so the wrapper
+# never shadows the real Python.  This prevents an infinite exec loop
+# when PYTHON_CMD matches the wrapper name (e.g. "python" on Windows).
+PYTHON_REAL=$(command -v "$PYTHON_CMD")
+
 # The git hook hardcodes 'exec python'. If the environment only has 'python3', git commit will fail.
 # Create a wrapper script in the temp dir and prepend to PATH to satisfy the hook.
 mkdir -p "$TEMP_DIR/bin"
 cat <<EOF > "$TEMP_DIR/bin/python"
 #!/bin/sh
-exec $PYTHON_CMD "\$@"
+exec "$PYTHON_REAL" "\$@"
 EOF
 chmod +x "$TEMP_DIR/bin/python"
 export PATH="$TEMP_DIR/bin:$PATH"
@@ -129,7 +134,7 @@ expect_commit_fail "Scenario C commit"
 git rm -f "my weird config.py"
 
 echo -e "\n${BLUE}--- Scenario D: Allowlist & Testing Keyword Bypass ---${NC}"
-echo '{ "paths": ["tests/fixtures/"] }' > allowlist.json
+echo '{ "paths": ["tests/fixtures/"], "patterns": [] }' > allowlist.json
 mkdir -p tests/fixtures/
 echo 'API_KEY="sk-proj-1234567890abcdefghij1234567890abcdefghij"' > tests/fixtures/secret.py
 echo 'API_KEY="sk-test-1234567890abcdefghij123456"' > test_mock.py
