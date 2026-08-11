@@ -13,8 +13,10 @@ class ScannerError(Exception):
 
 def _run_git_command(args: List[str]) -> bytes:
     try:
-        result = subprocess.run(args, capture_output=True, check=True)
+        result = subprocess.run(args, capture_output=True, check=True, timeout=30)
         return result.stdout
+    except subprocess.TimeoutExpired:
+        raise ScannerError(f"Git command timed out after 30s: {' '.join(args)}")
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr.decode("utf-8", errors="replace").strip()
         raise ScannerError(f"Git command failed: {' '.join(args)}\n{error_msg}")

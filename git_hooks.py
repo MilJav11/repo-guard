@@ -25,9 +25,12 @@ def _get_git_root() -> pathlib.Path:
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True,
             check=True,
-            text=True
+            text=True,
+            timeout=30
         )
         return pathlib.Path(result.stdout.strip())
+    except subprocess.TimeoutExpired:
+        raise HookError("Git rev-parse timed out after 30s.")
     except subprocess.CalledProcessError:
         raise HookError("Could not find git repository root. Are you in a git repository?")
     except FileNotFoundError:
