@@ -1,0 +1,7 @@
+- id: repo-guard
+  name: repo-guard
+  description: Block commits that contain known secret patterns in staged content.
+  entry: repo-guard scan
+  language: python
+  pass_filenames: false
+  always_run: true
