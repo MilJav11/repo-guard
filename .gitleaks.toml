@@ -1,0 +1,14 @@
+title = "repo-guard gitleaks config"
+
+[extend]
+useDefault = true
+
+# Synthetic, non-functional keys used as test input for repo-guard's own
+# detection rules. Only these test files are allowlisted.
+[[allowlists]]
+description = "Synthetic secrets in repo-guard test fixtures"
+paths = [
+  '''^tests/test_rules\.py$''',
+  '''^tests/test_scanner\.py$''',
+  '''^tests/e2e_test\.sh$''',
+]

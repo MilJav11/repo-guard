@@ -44,3 +44,7 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests/ -v
+
+      - name: Run end-to-end tests
+        if: runner.os == 'Linux'
+        run: bash tests/e2e_test.sh

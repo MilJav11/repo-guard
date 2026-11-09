@@ -12,29 +12,18 @@ echo -e "${BLUE}Starting repo-guard E2E tests...${NC}"
 # Get the absolute path to the repo-guard source directory
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Create a temporary directory
-TEMP_DIR=$(mktemp -d)
+# Create a temporary directory; the repo under test, the virtualenv and the
+# package copy live side by side so nothing but test files ends up in the repo.
+WORK_DIR=$(mktemp -d)
+TEMP_DIR="$WORK_DIR/repo"
+mkdir -p "$TEMP_DIR"
 echo "Setting up temporary git repository in $TEMP_DIR"
 
 cleanup() {
     echo -e "\nCleaning up temporary directory..."
-    rm -rf "$TEMP_DIR"
+    rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
-
-cd "$TEMP_DIR"
-
-# Initialize git repository
-git init -b master
-git config user.name "E2E QA Bot"
-git config user.email "qa@repo-guard.local"
-
-# Copy the app files into the temp directory
-cp -r "$SOURCE_DIR"/*.py .
-# If there is a requirements file, copy it just in case
-if [ -f "$SOURCE_DIR/requirements.txt" ]; then
-    cp "$SOURCE_DIR/requirements.txt" .
-fi
 
 # Find python executable
 PYTHON_CMD="python"
@@ -47,28 +36,36 @@ if ! command -v python &> /dev/null; then
         PYTHON_CMD="python.exe"
     fi
 fi
-
-# Resolve to absolute path before PATH is modified, so the wrapper
-# never shadows the real Python.  This prevents an infinite exec loop
-# when PYTHON_CMD matches the wrapper name (e.g. "python" on Windows).
 PYTHON_REAL=$(command -v "$PYTHON_CMD")
 
-# The git hook hardcodes 'exec python'. If the environment only has 'python3', git commit will fail.
-# Create a wrapper script in the temp dir and prepend to PATH to satisfy the hook.
-mkdir -p "$TEMP_DIR/bin"
-cat <<EOF > "$TEMP_DIR/bin/python"
-#!/bin/sh
-exec "$PYTHON_REAL" "\$@"
-EOF
-chmod +x "$TEMP_DIR/bin/python"
-export PATH="$TEMP_DIR/bin:$PATH"
+# Install repo-guard like a real user: NON-editable, into a fresh virtualenv
+# that is NOT activated and NOT on PATH. The repo under test contains no
+# guard.py and no `python` shim, so the hook must find the scanner by itself.
+mkdir -p "$WORK_DIR/src"
+cp "$SOURCE_DIR"/*.py "$SOURCE_DIR/pyproject.toml" "$SOURCE_DIR/requirements.txt" "$WORK_DIR/src/"
+"$PYTHON_REAL" -m venv "$WORK_DIR/venv"
+if [ -d "$WORK_DIR/venv/Scripts" ]; then VENV_BIN="$WORK_DIR/venv/Scripts"; else VENV_BIN="$WORK_DIR/venv/bin"; fi
+VENV_PY=$(ls "$VENV_BIN"/python "$VENV_BIN"/python.exe 2>/dev/null | head -n 1)
+"$VENV_PY" -m pip install -q --disable-pip-version-check "$WORK_DIR/src"
+REPO_GUARD="$VENV_BIN/repo-guard"
+[ -x "$REPO_GUARD" ] || REPO_GUARD="$VENV_BIN/repo-guard.exe"
+
+cd "$TEMP_DIR"
+
+# Initialize git repository (hermetic: always use the repo's own .git/hooks,
+# regardless of any global core.hooksPath on the machine running the test)
+git init -b e2e
+git config user.name "E2E QA Bot"
+git config user.email "qa@repo-guard.local"
+git config core.hooksPath .git/hooks
 
 # Install the hook
-echo "Installing hook using $PYTHON_CMD..."
-$PYTHON_CMD guard.py install-hook
+echo "Installing hook..."
+"$REPO_GUARD" install-hook
 
 # Create an initial commit
 echo "Initial commit..."
+echo "# e2e fixture repository" > README.md
 git add .
 git commit -m "Initial commit" --no-verify
 
@@ -133,6 +130,14 @@ git add "my weird config.py"
 expect_commit_fail "Scenario C commit"
 git rm -f "my weird config.py"
 
+echo -e "\n${BLUE}--- Scenario T: Secrets under tests/ Are Detected ---${NC}"
+mkdir -p tests
+echo 'API_KEY="sk-proj-1234567890abcdefghij1234567890abcdefghij"' > tests/leak.py
+git add tests/leak.py
+expect_commit_fail "Scenario T commit"
+git rm -f tests/leak.py
+rmdir tests 2>/dev/null || true
+
 echo -e "\n${BLUE}--- Scenario D: Allowlist & Testing Keyword Bypass ---${NC}"
 echo '{ "paths": ["tests/fixtures/"], "patterns": [] }' > allowlist.json
 mkdir -p tests/fixtures/
@@ -144,7 +149,7 @@ expect_commit_pass "Scenario D commit"
 echo -e "\n${BLUE}--- Scenario E: Binary & .env DX Warning ---${NC}"
 touch .env
 printf "dummy\x00data" > dummy.bin
-git add .env dummy.bin
+git add -f .env dummy.bin
 
 output=$(expect_commit_pass "Scenario E commit")
 if echo "$output" | grep -qi "WARNING: .env file staged for commit"; then
@@ -162,7 +167,7 @@ echo "#!/bin/sh" > .git/hooks/pre-commit
 echo "echo 'legacy hook'" >> .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 
-$PYTHON_CMD guard.py install-hook
+"$REPO_GUARD" install-hook
 if ! ls .git/hooks/pre-commit.bak.* 1> /dev/null 2>&1; then
     echo -e "${RED}FAIL: Backup file was not created${NC}"
     exit 1
@@ -173,8 +178,14 @@ if ! grep -q "# repo-guard hook start" .git/hooks/pre-commit; then
 fi
 echo -e "${GREEN}PASS: Existing hook safely backed up and modified${NC}"
 
+echo 'API_KEY="sk-proj-1234567890abcdefghij1234567890abcdefghij"' > legacy_leak.py
+git add legacy_leak.py
+expect_commit_fail "Scenario 1 leak commit (appended hook)"
+git rm -f legacy_leak.py > /dev/null
+echo -e "${GREEN}PASS: Appended hook still blocks a leak${NC}"
+
 echo -e "\n${BLUE}--- Scenario 2: HOOK IDEMPOTENCY ---${NC}"
-$PYTHON_CMD guard.py install-hook
+"$REPO_GUARD" install-hook
 COUNT=$(grep -c "# repo-guard hook start" .git/hooks/pre-commit || true)
 if [ "$COUNT" -ne 1 ]; then
     echo -e "${RED}FAIL: Idempotency failed, start marker count is $COUNT${NC}"
@@ -195,7 +206,7 @@ echo 'API_KEY="sk-proj-1234567890abcdefghij1234567890abcdefghij"' > secret2.py
 git add allowlist.json secret2.py
 
 set +e
-$PYTHON_CMD guard.py scan > scan_out.txt 2>&1
+"$REPO_GUARD" scan > scan_out.txt 2>&1
 exit_code=$?
 set -e
 
@@ -214,10 +225,10 @@ git reset HEAD allowlist.json secret2.py > /dev/null
 rm allowlist.json secret2.py
 
 echo -e "\n${BLUE}--- Scenario 5: INTERNAL FAILURE HANDLING ---${NC}"
-PYTHON_ABS=$($PYTHON_CMD -c "import sys, os; print(sys.executable.replace(os.sep, '/'))")
+PYTHON_ABS="$VENV_PY"
 mkdir -p /tmp/empty_path_dir
 set +e
-PATH="/tmp/empty_path_dir" "$PYTHON_ABS" guard.py scan > scan_out.txt 2>&1
+PATH="/tmp/empty_path_dir" "$PYTHON_ABS" -m guard scan > scan_out.txt 2>&1
 exit_code=$?
 set -e
 
@@ -249,5 +260,31 @@ git add partial.py
 echo 'API_KEY="sk-proj-1234567890abcdefghij1234567890abcdefghij"' >> partial.py
 expect_commit_pass "Scenario 6 commit"
 git rm -f partial.py
+
+echo -e "\n${BLUE}--- Scenario 7: REPO-LOCAL MODULES CANNOT SHADOW THE SCANNER ---${NC}"
+# A repo shipping its own rules.py / guard.py must not disable the installed scanner.
+printf 'RULES = []\nEXCLUDED_DIRS = set()\nEXCLUDED_EXTENSIONS = set()\nEXCLUDED_FILES = set()\nTESTING_KEYWORDS = set()\n' > rules.py
+printf 'import sys\nsys.exit(0)\n' > guard.py
+git add rules.py guard.py
+expect_commit_pass "Scenario 7 shadow modules commit"
+echo 'API_KEY="sk-proj-1234567890abcdefghij1234567890abcdefghij"' > shadow_leak.py
+git add shadow_leak.py
+expect_commit_fail "Scenario 7 leak commit"
+git rm -f shadow_leak.py > /dev/null
+git rm -f rules.py guard.py > /dev/null
+git commit -m "Cleanup shadow modules" --no-verify > /dev/null
+
+echo -e "\n${BLUE}--- Scenario 8: HOOK FAILS CLOSED WHEN repo-guard IS UNINSTALLED ---${NC}"
+"$VENV_PY" -m pip uninstall -y -q repo-guard
+echo "harmless" > harmless.txt
+git add harmless.txt
+expect_commit_fail "Scenario 8 commit"
+if ! echo "$output" | grep -qi "Reinstall repo-guard"; then
+    echo -e "${RED}FAIL: Missing 'Reinstall' hint in hook error${NC}"
+    echo "Output was:"
+    echo "$output"
+    exit 1
+fi
+echo -e "${GREEN}PASS: Hook fails closed with a reinstall hint${NC}"
 
 echo -e "\n${GREEN}✅ ALL E2E TESTS PASSED${NC}"

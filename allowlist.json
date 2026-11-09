@@ -1,0 +1,8 @@
+{
+  "paths": [
+    "tests/test_scanner.py",
+    "tests/test_rules.py",
+    "tests/e2e_test.sh"
+  ],
+  "patterns": []
+}

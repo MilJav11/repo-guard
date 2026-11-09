@@ -64,8 +64,6 @@ RULES: List[Rule] = [
 
 # Hard-coded Exclusions
 EXCLUDED_DIRS = {
-    "tests",
-    "fixtures",
     "__pycache__",
     "node_modules",
     "venv",
