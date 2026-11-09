@@ -130,6 +130,14 @@ git add "my weird config.py"
 expect_commit_fail "Scenario C commit"
 git rm -f "my weird config.py"
 
+echo -e "\n${BLUE}--- Scenario T: Secrets under tests/ Are Detected ---${NC}"
+mkdir -p tests
+echo 'API_KEY="sk-proj-1234567890abcdefghij1234567890abcdefghij"' > tests/leak.py
+git add tests/leak.py
+expect_commit_fail "Scenario T commit"
+git rm -f tests/leak.py
+rmdir tests 2>/dev/null || true
+
 echo -e "\n${BLUE}--- Scenario D: Allowlist & Testing Keyword Bypass ---${NC}"
 echo '{ "paths": ["tests/fixtures/"], "patterns": [] }' > allowlist.json
 mkdir -p tests/fixtures/

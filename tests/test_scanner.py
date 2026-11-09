@@ -36,6 +36,11 @@ class TestScanner(unittest.TestCase):
         self.assertFalse(is_excluded("src/main.py", allowlist))
         self.assertFalse(is_excluded("config.py", allowlist))
 
+        # tests/ and fixtures/ are scanned like any other directory
+        self.assertFalse(is_excluded("tests/leak.py", []))
+        self.assertFalse(is_excluded("pkg/fixtures/data.json", []))
+        self.assertFalse(is_excluded("tests/fixtures/secret.txt", []))
+
     @patch("scanner._run_git_command")
     @patch("scanner.load_allowlist")
     def test_scan_repository(self, mock_load_allowlist, mock_run_git_command):
@@ -73,6 +78,47 @@ class TestScanner(unittest.TestCase):
         test_finding = next((f for f in findings if f.file_path == "test_config.py"), None)
         self.assertIsNotNone(test_finding)
         self.assertEqual(test_finding.severity, Severity.LOW)
+
+    @patch("scanner._run_git_command")
+    @patch("scanner.load_allowlist")
+    def test_secret_in_tests_directory_is_detected(self, mock_load_allowlist, mock_run_git_command):
+        mock_load_allowlist.return_value = {"paths": [], "patterns": []}
+
+        def mock_git_command_effect(args):
+            if args[1] == "diff":
+                return b"tests/leak.py\x00"
+            elif args[1] == "cat-file":
+                return b"1024"
+            elif args[1] == "show":
+                return b'API_KEY = "sk-1234567890abcdefghij1234567890"'
+            return b""
+
+        mock_run_git_command.side_effect = mock_git_command_effect
+
+        findings = scan_repository()
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].file_path, "tests/leak.py")
+        self.assertEqual(findings[0].severity, Severity.CRITICAL)
+
+    @patch("scanner._run_git_command")
+    @patch("scanner.load_allowlist")
+    def test_allowlisted_path_in_tests_directory_is_skipped(self, mock_load_allowlist, mock_run_git_command):
+        # Fixtures can still be opted out explicitly through allowlist.json
+        mock_load_allowlist.return_value = {"paths": ["tests/leak.py"], "patterns": []}
+
+        def mock_git_command_effect(args):
+            if args[1] == "diff":
+                return b"tests/leak.py\x00"
+            elif args[1] == "cat-file":
+                return b"1024"
+            elif args[1] == "show":
+                return b'API_KEY = "sk-1234567890abcdefghij1234567890"'
+            return b""
+
+        mock_run_git_command.side_effect = mock_git_command_effect
+
+        self.assertEqual(scan_repository(), [])
 
     @patch("scanner._run_git_command")
     @patch("scanner.load_allowlist")
