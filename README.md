@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/dd57abc2-b434-4cdd-b640-99add1edd382
 
 ## Installation
 
-You can install `repo-guard` globally directly from GitHub:
+Requires **Python 3.11+** and Git. Install `repo-guard` directly from GitHub:
 
 ```bash
 pip install git+https://github.com/MilJav11/repo-guard.git
@@ -42,14 +42,43 @@ pip install git+https://github.com/MilJav11/repo-guard.git
 Then, navigate to any of your local Git repositories and activate the guard:
 
 ```bash
+cd /path/to/your/repo
 repo-guard install-hook
-# run inside your target Git repository
 ```
+
+The hook records the **absolute path of the Python interpreter that installed
+it** and runs the installed scanner with it, so it does not depend on `python`
+being on `PATH` or on any file in your repository. Install repo-guard into a
+long-lived environment (for example with `pipx`).
+
+If that interpreter or the repo-guard package is later removed (for example you
+delete the virtualenv), commits are **blocked** with a message telling you to
+reinstall. Reinstall repo-guard and run `repo-guard install-hook` again — it
+refreshes the hook in place and keeps a `pre-commit.bak.*` backup.
+
+An existing `pre-commit` hook is backed up and kept; the repo-guard section is
+appended between `# repo-guard hook start` / `# repo-guard hook end` markers.
+Make sure the existing hook does not `exit` before reaching the end of the file.
+Repositories that set `core.hooksPath` (for example husky) do not run
+`.git/hooks/pre-commit`, so `install-hook` has no effect there.
 
 ## Quick Test
 
+The value is generated at run time, so this README itself contains nothing
+that looks like a key:
+
+**macOS / Linux (Bash):**
+
 ```bash
-echo 'OPENAI_API_KEY="sk-123..."' > temp_test_file.py
+printf 'OPENAI_API_KEY="sk-proj-%s"\n' "$(printf 'a1b2c3d4e5%.0s' 1 2 3 4)" > temp_test_file.py
+git add temp_test_file.py
+git commit -m "test"
+```
+
+**Windows (PowerShell):**
+
+```powershell
+Set-Content temp_test_file.py ('OPENAI_API_KEY="sk-proj-' + ('a1b2c3d4e5' * 4) + '"')
 git add temp_test_file.py
 git commit -m "test"
 ```
@@ -99,6 +128,23 @@ git restore --staged temp_test_file.py && rm temp_test_file.py
   downgrades findings that contain known testing keywords (e.g. `test`,
   `example`, `your-key-here`) to LOW severity.
 
+## What Is Scanned
+
+* **Scanned:** every staged file that is added, copied, modified or renamed,
+  read from the Git index. This **includes `tests/` and `fixtures/`
+  directories** — a real key committed there is reported like anywhere else.
+* **Skipped:** binary files (containing a null byte), files larger than 1 MB,
+  directories `__pycache__`, `node_modules`, `venv`, `.venv`, `dist`, `build`,
+  extensions `.sqlite`, `.db`, `.pyc`, and the files `package-lock.json` and
+  `yarn.lock`.
+* **`.env` files** print a warning but are still scanned.
+* **Blocking vs. informational:** findings of HIGH/CRITICAL severity (the
+  providers below) block the commit. LOW findings (generic password
+  assignments, or keys containing a testing keyword such as `test` or
+  `example`) are printed but do not block.
+
+To skip your own synthetic test data, use the allowlist below.
+
 ## Supported Providers (Blocking)
 
 * OpenAI
@@ -126,19 +172,23 @@ When `allowlist.json` does not exist, the scanner uses an empty allowlist:
 
 ```json
 {
-  "paths": ["tests/fixtures/"],
+  "paths": ["tests/fixtures/", "docs/example-config.md"],
   "patterns": [
-    "^tests/.*",
-    "\\.env\\.example$",
-    "[a-f0-9]{32}"
+    "pragma: allowlist secret"
   ]
 }
 ```
 
-- `paths` — list of path prefixes; staged files whose path starts with any
-  entry are skipped.
-- `patterns` — list of Python regex patterns; lines matching any pattern are
-  excluded from secret detection.
+- `paths` — list of path prefixes, relative to the repository root and written
+  with forward slashes; staged files whose path starts with any entry are
+  skipped entirely.
+- `patterns` — list of Python regex patterns matched against each **line of
+  file content** (not the file name); a matching line is excluded from secret
+  detection, including any real secret that shares that line. Keep patterns
+  narrow.
+
+This repository uses the mechanism itself: its `allowlist.json` lists only the
+three test files that contain synthetic keys.
 
 **Validation rules:**
 
@@ -189,9 +239,18 @@ Run the test suite from the repository root:
 python -m pytest tests/ -v
 ```
 
-The suite currently contains **22 tests** covering regex rules, staged-content
-scanning, UTF-8 handling, and allowlist validation (including size limits,
-structure checks, and ReDoS detection).
+The suite currently contains **35 tests** covering regex rules, staged-content
+scanning (including `tests/` directories), UTF-8 handling, allowlist
+validation (size limits, structure checks, ReDoS detection) and generation of
+the pre-commit hook.
+
+The end-to-end test installs repo-guard (non-editable) into a throwaway
+virtualenv and exercises real `git commit` scenarios. It needs Python 3.11+,
+Git, bash and network access for `pip`:
+
+```bash
+bash tests/e2e_test.sh
+```
 
 ## Design Philosophy
 
